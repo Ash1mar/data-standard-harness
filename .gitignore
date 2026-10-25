@@ -1,0 +1,33 @@
+# Local environments and downloaded dependencies
+/.venv*/
+/.wheels/
+/node_modules/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Private business data, model credentials, and generated artifacts stay local.
+/data/
+/deliverables/
+/.tmpcheck/
+/.workbuddy/
+/.local/
+/.runtime/
+/.private/
+/.dsh/home/
+/.dsh/cordis.local.yml
+/.dsh/profiles/
+/.dsh/sessions/
+/.dsh/.credentials*
+.env
+.env.*
+!.env.example
+*llm_key*
+*.pem
+*.key
+*.log
+*.zip
+
+# Workstation-specific migration notes contain local environment details.
+/docs/迁移核对-20261023.md
