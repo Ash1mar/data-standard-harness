@@ -20,12 +20,16 @@ import yaml
 PROJECT = Path(__file__).resolve().parent.parent
 
 
-def assess(events):
+def assess(events, mode="B"):
     """Validate tool completion and same-ID propagation, not just tool discovery."""
     calls = [e for e in events if e.get("type") == "tool_call"]
     results = {e.get("callId"): e for e in events if e.get("type") == "tool_result"}
     required = ["inspect_project", "analyze_requirements", "build_knowledge_base", "match_standards",
                 "generate_standard", "enrich_standard", "evaluate_standard", "export_standard"]
+    if mode == "A":
+        required = ["inspect_project", "parse_documents", "extract_knowledge", "build_knowledge_base",
+                    "analyze_discovery", "prioritize_discovery", "generate_standard", "enrich_standard",
+                    "evaluate_standard", "export_standard"]
     names = [e.get("tool") or e.get("name") for e in calls]
     missing = [name for name in required if "mcp__standards__" + name not in names]
     errors, payloads = [], {}
@@ -49,8 +53,11 @@ def assess(events):
     enrichment = payloads.get("enrich_standard") or {}
     if not enrichment.get("batches") or enrichment.get("errors"):
         errors.append("Business LLM enrichment did not complete")
-    if not (payloads.get("evaluate_standard") or {}).get("evaluable"):
-        errors.append("Synthetic draft was not evaluable")
+    evaluation = payloads.get("evaluate_standard") or {}
+    if mode == "B" and not evaluation.get("evaluable"):
+        errors.append("Synthetic B draft was not evaluable")
+    if mode == "A" and evaluation.get("evaluable"):
+        errors.append("Synthetic A has no gold and must not report scored accuracy")
     export_bytes = (payloads.get("export_standard") or {}).get("bytes", 0)
     if not export_bytes:
         errors.append("No exported XLSX")
@@ -67,6 +74,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--installation", type=Path, default=Path("/opt/data/deepseek-harness"))
     parser.add_argument("--base-url", default="http://127.0.0.1:8125")
+    parser.add_argument("--mode", choices=["A", "B"], default="B")
     parser.add_argument("--windows-ollama-relay", action="store_true",
                         help="Temporary loopback relay when the existing WSL Docker bridge is unavailable")
     args = parser.parse_args()
@@ -133,6 +141,16 @@ def main():
         "These are draft artifacts; human decision enforcement and upstream association are deferred. "
         "Finally report the ID, whether evaluable, export size, and those limitations in Chinese."
     )
+    if args.mode == "A":
+        prompt = (
+            "Run the synthetic mode A text integration test. Use only mcp__standards__ tools. "
+            "Call inspect_project, parse_documents(mode=A), extract_knowledge(mode=A), build_knowledge_base(mode=A), "
+            "analyze_discovery, prioritize_discovery. Then select 2..4 actual candidate_id values returned by analyze_discovery "
+            "and call generate_standard(mode=A,candidate_ids=those IDs). This is a technical draft selection, not human approval. "
+            "Use the exact returned STD-A ID for enrich_standard(limit=4), evaluate_standard, export_standard. "
+            "A has no gold: report not evaluable, not 0% accuracy. Stop on any tool error. "
+            "No shell, files, web, subagents or library writes. Final response in Chinese with the ID, export size and limitations."
+        )
     started = time.monotonic()
     try:
         result = subprocess.run([binary, "--profile", "headless", "--json", prompt],
@@ -141,23 +159,24 @@ def main():
         if relay:
             relay.shutdown()
     # Raw local logs may include paths or generated content; never commit them.
-    (PROJECT / ".runtime/harness.stdout.jsonl").write_text(result.stdout)
-    (PROJECT / ".runtime/harness.stderr.log").write_text(result.stderr)
+    (PROJECT / f".runtime/harness-{args.mode}.stdout.jsonl").write_text(result.stdout)
+    (PROJECT / f".runtime/harness-{args.mode}.stderr.log").write_text(result.stderr)
     events = []
     for line in result.stdout.splitlines():
         try:
             events.append(json.loads(line))
         except json.JSONDecodeError:
             pass
-    assessment = assess(events)
+    assessment = assess(events, args.mode)
     failures = [e for e in events if e.get("type") in ("error", "fatal")]
     report = {"status": "PASS" if result.returncode == 0 and not assessment["missing_tools"] and not assessment["validation_errors"] and not failures else "FAIL",
               "real_harness": True, "real_model": "gemma4:31b-cloud", "synthetic_data_only": True,
+              "mode": args.mode,
               "temporary_windows_ollama_relay": bool(relay),
               "seconds": round(time.monotonic() - started, 2), "exit_code": result.returncode,
               "tool_call_count": len(assessment["tool_names"]), **assessment,
               "final": [e for e in events if e.get("type") == "final"]}
-    (PROJECT / ".runtime/harness-verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
+    (PROJECT / f".runtime/harness-{args.mode}-verification.json").write_text(json.dumps(report, ensure_ascii=False, indent=2))
     print(json.dumps(report, ensure_ascii=False), flush=True)
     if report["status"] != "PASS":
         # Log paths only; raw errors may contain local credentials or URLs.

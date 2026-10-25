@@ -41,10 +41,20 @@ def parse_sse(text: str) -> list[dict]:
     return events
 
 
-def validate_standard_id(value: str) -> str:
-    if not re.fullmatch(r"STD-B-[A-Za-z0-9_-]{1,100}", value):
-        raise ValueError("Use the exact STD-B-* ID returned by generate_standard")
+def validate_mode(value: str) -> str:
+    if value not in ("A", "B"):
+        raise ValueError("mode must be A or B")
     return value
+
+
+def validate_standard_id(value: str) -> str:
+    if not re.fullmatch(r"STD-[AB]-[A-Za-z0-9_-]{1,100}", value):
+        raise ValueError("Use the exact STD-A-* or STD-B-* ID returned by generate_standard")
+    return value
+
+
+def standard_mode(value: str) -> str:
+    return validate_standard_id(value).split("-", 2)[1]
 
 
 def summarize_event(event: dict) -> dict:
@@ -65,7 +75,11 @@ def summarize_event(event: dict) -> dict:
         "std_created": ["standard_id", "class_count", "attribute_count"],
         "std_complete": ["standard_id", "source_path", "quality", "usability", "incomplete_fields"],
         "graph_complete": ["candidate_count", "stats"],
-        "extract_complete": ["candidate_count", "count", "low_confidence_count"],
+        "extract_complete": ["mode", "candidate_count", "count", "low_confidence_count", "type_dist", "llm"],
+        "parse_result": ["mode", "file", "fmt", "page_count", "parse_quality", "note"],
+        "requirement_parsed": ["mode", "file", "fmt", "page_count", "parse_quality"],
+        "novelty_result": ["candidate_id", "term", "type", "confidence", "status", "priority", "llm_verdict"],
+        "landscape_complete": ["candidate_count", "novelty_dist", "degraded", "llm"],
         "parse_complete": ["mode"],
     }.get(name, [])
     return {"event": name, "data": {k: data[k] for k in keys if k in data}}
@@ -95,6 +109,9 @@ class BackendClient:
         except httpx.TimeoutException as exc:
             self._audit(call_id, path, "unknown", started)
             raise BackendError("Backend timed out; execution may continue. Inspect artifacts before retrying.") from exc
+        except httpx.RemoteProtocolError as exc:
+            self._audit(call_id, path, "incomplete_stream", started)
+            raise BackendError("Backend response stream interrupted; inspect backend logs and artifacts before retrying.") from exc
         except httpx.HTTPError as exc:
             self._audit(call_id, path, "connection_error", started)
             raise BackendError("Cannot reach the local backend; start it in live mode first.") from exc
@@ -125,7 +142,8 @@ class BackendClient:
             result = {"events": [summarize_event(e) for e in events if e["event"] in {
                 "req_parsed", "req_complete", "gap_score", "gap_complete", "match_library", "match_complete",
                 "syn_overview", "syn_commit", "syn_complete", "std_created", "std_complete", "graph_complete",
-                "extract_complete", "parse_complete"}], "event_count": len(events)}
+                "extract_complete", "parse_complete", "parse_result", "requirement_parsed", "novelty_result",
+                "landscape_complete"}], "event_count": len(events)}
         else:
             try:
                 result = response.json()

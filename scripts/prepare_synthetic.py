@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import argparse
 import shutil
 import uuid
 from pathlib import Path
@@ -11,7 +12,7 @@ from openpyxl import Workbook
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def prepare() -> Path:
+def prepare(mode: str = "B") -> Path:
     target = ROOT / ".runtime" / "validation" / uuid.uuid4().hex / "app"
     target.mkdir(parents=True, exist_ok=False)
     for name in ("backend", "frontend", ".dsh/roles"):
@@ -46,12 +47,33 @@ def prepare() -> Path:
     (folder / "synthetic-rules.json").write_text(json.dumps(rules, ensure_ascii=False), encoding="utf-8")
     manifest["slots"]["model_spec"] = {"files": ["synthetic-rules.json"], "uploaded_at": "synthetic-fixture"}
     (data / "uploaded/manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
+    if mode == "A":
+        folder = data / "uploaded/a_in_g1"; folder.mkdir()
+        (folder / "synthetic-discovery.md").write_text('''# 合成巡检设备
+
+## 合成巡检泵
+
+本节仅为接入测试的虚构文本，不包含任何企业实际设备、运行参数或技术要求。
+
+| 属性中文名称 | 数据类型 | 数据格式/约束 | 属性单位 | 属性定义 |
+| --- | --- | --- | --- | --- |
+| 演示编号 | VARCHAR(32) | VARCHAR(32) | | 虚构巡检泵的标识编号 |
+| 演示采样周期 | 整型 | INTEGER | s | 虚构样例两次采样之间的间隔 |
+
+演示状态：虚构设备在测试样例中的状态，取值为待检和完成。
+''', encoding="utf-8")
+        manifest["slots"]["a_in_g1"] = {"files": ["synthetic-discovery.md"], "uploaded_at": "synthetic-fixture"}
+        manifest["decisions"]["a_gold_g1"] = "off"
+        (data / "taxonomy.json").write_text(json.dumps({"domains": [{"domain": "合成测试", "subdomains": []}]}, ensure_ascii=False), encoding="utf-8")
+        (data / "uploaded/manifest.json").write_text(json.dumps(manifest, ensure_ascii=False), encoding="utf-8")
     # Kept as separate validation context; never copies any original data or model keys.
-    result = {"project": str(target), "synthetic_only": True, "objects": 1, "attributes": 2}
+    result = {"project": str(target), "mode": mode, "synthetic_only": True, "objects": 1, "attributes": 2}
     (ROOT / ".runtime/latest-validation.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
     print(json.dumps(result, ensure_ascii=False))
     return target
 
 
 if __name__ == "__main__":
-    prepare()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--mode", choices=["A", "B"], default="B")
+    prepare(parser.parse_args().mode)

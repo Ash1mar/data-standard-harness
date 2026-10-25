@@ -6,7 +6,7 @@ import pytest
 import httpx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
-from harness_http import BackendClient, BackendError, parse_sse, validate_standard_id
+from harness_http import BackendClient, BackendError, parse_sse, validate_standard_id, standard_mode, validate_mode
 
 
 def test_sse_named_events_crlf_multiline_and_unterminated_last_block():
@@ -27,14 +27,22 @@ def test_backend_is_loopback_only(url):
         BackendClient(url)
 
 
-@pytest.mark.parametrize("sid", ["../secret", "STD-A-123456", "STD-B-../secret", ""])
-def test_only_exact_mode_b_standard_ids_are_accepted(sid):
+@pytest.mark.parametrize("sid", ["../secret", "STD-C-123456", "STD-B-../secret", ""])
+def test_only_exact_supported_standard_ids_are_accepted(sid):
     with pytest.raises(ValueError):
         validate_standard_id(sid)
 
 
 def test_standard_id_matches_existing_business_format():
     assert validate_standard_id("STD-B-123456") == "STD-B-123456"
+    assert standard_mode("STD-A-123456") == "A"
+    assert standard_mode("STD-B-123456") == "B"
+
+
+@pytest.mark.parametrize("value", ["a", "C", "", "../B"])
+def test_modes_are_explicit(value):
+    with pytest.raises(ValueError):
+        validate_mode(value)
 
 
 def test_http_200_with_failure_event_is_not_success(tmp_path):
@@ -51,6 +59,14 @@ def test_truncated_stream_does_not_pass(tmp_path):
     client = BackendClient(audit_dir=tmp_path, transport=transport)
     with pytest.raises(BackendError, match="missing std_complete"):
         asyncio.run(client.request("/api/standard/generate", terminal="std_complete"))
+
+
+def test_interrupted_connection_is_reported_as_incomplete_response(tmp_path):
+    def handler(request):
+        raise httpx.RemoteProtocolError("incomplete chunked read")
+    client = BackendClient(audit_dir=tmp_path, transport=httpx.MockTransport(handler))
+    with pytest.raises(BackendError, match="stream interrupted"):
+        asyncio.run(client.request("/api/extract", {"mode": "A"}))
 
 
 def test_replay_mode_prevents_any_business_call(tmp_path):

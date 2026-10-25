@@ -760,7 +760,7 @@ async def extract_sample(body: ExtractSample):
                 yield bridge.format_sse({
                     "event": "extract_section",
                     "data": {"mode": "A", "file": pd["file"], "candidate_count": pd["candidate_count"],
-                             "sparse": pd["sparse"], "topical_terms": pd["topical_terms"]},
+                             "sparse": pd["sparse"], "topical_terms": pd.get("topical_terms", [])},
                     "ts": bridge._now_iso(),
                 })
                 for c in pd["candidates"]:

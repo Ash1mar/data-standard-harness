@@ -118,6 +118,8 @@ def config() -> dict:
     cfg["base_url"] = (os.environ.get("LLM_BASE_URL") or cfg["base_url"]).rstrip("/")
     cfg["api_key"] = os.environ.get("LLM_API_KEY") or cfg["api_key"]
     cfg["model"] = os.environ.get("LLM_MODEL") or cfg["model"]
+    if "LLM_BULK_MODEL" in os.environ:
+        cfg["bulk_model"] = os.environ["LLM_BULK_MODEL"]
     if os.environ.get("LLM_TIMEOUT"):
         try:
             cfg["timeout"] = float(os.environ["LLM_TIMEOUT"])

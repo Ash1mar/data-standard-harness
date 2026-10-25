@@ -5,7 +5,7 @@ import sys
 import argparse
 
 from mcp.server.fastmcp import FastMCP
-from harness_http import BackendClient, BackendError, validate_standard_id
+from harness_http import BackendClient, BackendError, validate_standard_id, validate_mode, standard_mode
 
 mcp = FastMCP("data-standard-agent", instructions=(
     "Use inspect_project first. Only live computation is accepted. Operate on data selected in the existing web UI. "
@@ -15,6 +15,31 @@ mcp = FastMCP("data-standard-agent", instructions=(
     "Do not repeat a timed-out generation call without checking the application."
 ))
 backend = BackendClient()
+
+
+@mcp.tool()
+async def parse_documents(mode: str = "B") -> dict:
+    """Parse currently selected A documents or B requirement tables. B is the backwards-compatible default."""
+    return await backend.stage("/api/parse", {"mode": validate_mode(mode)}, terminal="parse_complete")
+
+
+@mcp.tool()
+async def extract_knowledge(mode: str = "B") -> dict:
+    """Extract evidence-backed candidates for A or B using existing business code and configured LLM."""
+    return await backend.stage("/api/extract", {"mode": validate_mode(mode)}, terminal="extract_complete")
+
+
+@mcp.tool()
+async def analyze_discovery() -> dict:
+    """Mode A: analyze novelty, coverage and priorities; return candidate IDs for explicit draft selection."""
+    return await backend.stage("/api/landscape/build", {"force": False}, terminal="landscape_complete")
+
+
+@mcp.tool()
+async def prioritize_discovery(candidate_ids: list[str] | None = None) -> dict:
+    """Mode A: rank discovered candidates with existing priority rationale; does not approve anything."""
+    result = await backend.stage("/api/landscape/prioritize", {"candidate_ids": candidate_ids})
+    return {"count": result.get("count"), "priorities": result.get("priorities", [])[:24]}
 
 
 @mcp.tool()
@@ -35,9 +60,9 @@ async def analyze_requirements() -> dict:
 
 
 @mcp.tool()
-async def build_knowledge_base() -> dict:
-    """Build mode-B graph from D0 and selected input. Does not run full AI relationship inference."""
-    return await backend.stage("/api/graph/build", {"mode": "B", "with_candidates": True}, terminal="graph_complete")
+async def build_knowledge_base(mode: str = "B") -> dict:
+    """Build A/B graph from D0 and selected input. Does not run full AI relationship inference. Defaults to B."""
+    return await backend.stage("/api/graph/build", {"mode": validate_mode(mode), "with_candidates": True}, terminal="graph_complete")
 
 
 @mcp.tool()
@@ -56,13 +81,30 @@ async def match_standards() -> dict:
 
 
 @mcp.tool()
-async def generate_standard() -> dict:
-    """Explicitly synthesize and save the current mode-B model, then create a new DRAFT standard.
+async def generate_standard(mode: str = "B", candidate_ids: list[str] | None = None) -> dict:
+    """Create a DRAFT standard using existing A/B business code. Defaults to the original mode-B flow.
 
     Uses existing business rules without fixing approval enforcement. Never means approved or production-ready.
+    A requires explicit candidate IDs returned by analyze_discovery. Selection is a technical draft operation,
+    not human approval, even though the legacy endpoint stores it under approved-candidates.
     """
-    model = await backend.stage("/api/requirement/synthesize", {"commit": True, "note": "MCP draft generation"}, terminal="syn_complete")
-    standard = await backend.stage("/api/standard/generate", {"source": "B"}, terminal="std_complete")
+    validate_mode(mode)
+    if mode == "B":
+        if candidate_ids is not None:
+            raise ValueError("candidate_ids is only used for mode A")
+        model = await backend.stage("/api/requirement/synthesize", {"commit": True, "note": "MCP draft generation"}, terminal="syn_complete")
+    else:
+        if not candidate_ids or len(candidate_ids) > 50:
+            raise ValueError("Mode A requires 1..50 explicit candidate_ids from analyze_discovery")
+        model = await backend.stage("/api/landscape/approve", {"candidate_ids": candidate_ids,
+                                   "note": "MCP technical draft selection only; NOT human approval"})
+        if model.get("count") != len(set(candidate_ids)):
+            raise BackendError("Some selected candidate IDs were not found; inspect discovery before retrying")
+        # Full evidence and candidates remain in FastAPI artifacts. Keep the MCP
+        # response small enough that Harness does not truncate the JSON/ID.
+        model = {**{k: model[k] for k in ("call_id", "count", "note", "novelty_dist", "type_dist") if k in model},
+                 "selected_candidate_ids": list(dict.fromkeys(candidate_ids))}
+    standard = await backend.stage("/api/standard/generate", {"source": mode}, terminal="std_complete")
     created = next(e["data"] for e in standard["events"] if e["event"] == "std_created")
     return {"standard_id": validate_standard_id(created["standard_id"]), "model": model,
             "standard": standard, "draft_only": True,
@@ -83,18 +125,22 @@ async def enrich_standard(standard_id: str, limit: int = 12) -> dict:
 
 @mcp.tool()
 async def evaluate_standard(standard_id: str) -> dict:
-    """Evaluate this exact P6 standard against selected D3; unavailable gold means not evaluable, not 0% accuracy."""
-    validate_standard_id(standard_id)
-    result = await backend.stage("/api/eval/run", {"mode": "B", "standard_id": standard_id, "pred_source": "standard"})
-    return {"requested_standard_id": standard_id, **{k: result[k] for k in ["call_id", "mode", "group", "evaluable", "unevaluable_reason", "has_gold",
+    """Request evaluation of this A/B ID against selected D3. Check artifact_binding_verified before attributing scores to the draft."""
+    mode = standard_mode(standard_id)
+    result = await backend.stage("/api/eval/run", {"mode": mode, "standard_id": standard_id, "pred_source": "standard"})
+    bound = result.get("standard_id") == standard_id
+    return {"requested_standard_id": standard_id, "artifact_binding_verified": bound,
+            "evaluation_scope_note": ("Backend reported the requested standard ID" if bound else
+                                      "Backend omitted the standard ID in its response; provenance metadata is incomplete, scores are reference only"),
+            **{k: result[k] for k in ["call_id", "mode", "group", "evaluable", "unevaluable_reason", "has_gold",
                                     "overall", "metrics", "notes", "standard_id", "pred_counts", "gold_counts"] if k in result}}
 
 
 @mcp.tool()
 async def export_standard(standard_id: str) -> dict:
-    """Export this exact mode-B draft to a local XLSX file. Does not write to the standard library."""
-    validate_standard_id(standard_id)
-    return await backend.stage("/api/standard/export", method="GET", params={"mode": "B", "standard_id": standard_id}, download=True)
+    """Export this exact A/B draft to XLSX. Infer mode from ID; does not write to the standard library."""
+    mode = standard_mode(standard_id)
+    return await backend.stage("/api/standard/export", method="GET", params={"mode": mode, "standard_id": standard_id}, download=True)
 
 
 if __name__ == "__main__":

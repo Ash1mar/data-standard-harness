@@ -17,7 +17,7 @@ project = Path(json.loads((root / ".runtime/latest-validation.json").read_text()
 if not project.is_relative_to((root / ".runtime/validation").resolve()):
     raise SystemExit("Validation project must be inside .runtime/validation")
 env = dict(os.environ, STANDARD_EXECUTION_MODE="live", PYTHONIOENCODING="utf-8",
-           LLM_BASE_URL=args.base_url, LLM_MODEL=args.model, LLM_API_KEY="local-ollama",
+           LLM_BASE_URL=args.base_url, LLM_MODEL=args.model, LLM_BULK_MODEL=args.model, LLM_API_KEY="local-ollama",
            LLM_TIMEOUT="180", LLM_ENABLED="0" if args.no_llm else "1")
 raise SystemExit(subprocess.call([sys.executable, "-m", "uvicorn", "main:app", "--app-dir", str(project / "backend"),
                                  "--host", "127.0.0.1", "--port", str(args.port)], cwd=project, env=env))

@@ -546,7 +546,7 @@ def _llm_enrich_a(res: dict, docs: list[dict]) -> dict:
     扫描件没有文本层时不硬抽 —— 如实写进 `llm.skipped_extract`。
     无模型可用时原样返回，并在 `llm.reason` 说明，绝不假装跑过。
     """
-    import concurrent.futures as cf
+    import concurrent.futures as futures
     from tools import llm_client as llm
     from tools import llm_tasks as lt
 
@@ -590,7 +590,7 @@ def _llm_enrich_a(res: dict, docs: list[dict]) -> dict:
 
         got_term = got_def = None
         got_ext = []
-        with cf.ThreadPoolExecutor(max_workers=3) as ex:
+        with futures.ThreadPoolExecutor(max_workers=3) as ex:
             f_term = ex.submit(lt.normalize_terms, names, model=bulk, timeout=180) if names else None
             f_def = (ex.submit(llm.suggest_definitions, def_items, max_items=len(def_items),
                                tag="p2.define", model=bulk, timeout=180) if def_items else None)
