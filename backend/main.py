@@ -84,6 +84,8 @@ app.add_middleware(demo.DemoMiddleware)
 @app.on_event("startup")
 async def _demo_startup():
     """演示态开启过就自动装好 P0 内置文件与产物快照（演示机不用手动点）。"""
+    if os.getenv("STANDARD_EXECUTION_MODE") == "live":
+        return
     try:
         r = demo.ensure_active()
         if r.get("ok"):
@@ -1553,6 +1555,7 @@ async def requirement_clarify(body: ClarifyIn):
         "low_confidence_count": len(low),
         "threshold": ra.CONFIDENCE_REFERENCE_ONLY,
         "note": c["note"],
+        "llm": c.get("llm", {}),
     })
 
 
@@ -1994,6 +1997,18 @@ async def health():
         "ok": True,
         "roles": bridge.list_roles(),
         "data_root": str(bridge.DATA_ROOT),
+    })
+
+
+@app.get("/api/integration/status")
+async def integration_status():
+    """MCP preflight: report execution mode and model availability without credentials."""
+    live = os.getenv("STANDARD_EXECUTION_MODE") == "live"
+    cfg = llm.config()
+    return JSONResponse({
+        "ok": True, "live_mode": live, "replay_effective": demo.is_active(),
+        "model": cfg.get("model"), "llm_configured": llm.available(),
+        "limitations": ["human_decisions_deferred", "artifact_association_deferred"],
     })
 
 

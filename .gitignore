@@ -17,6 +17,7 @@ __pycache__/
 /.private/
 /.dsh/home/
 /.dsh/cordis.local.yml
+/.dsh/*.local.yml
 /.dsh/profiles/
 /.dsh/sessions/
 /.dsh/.credentials*

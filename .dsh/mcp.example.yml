@@ -1,0 +1,14 @@
+# Generate actual absolute paths using scripts/configure_harness.py.
+- insert:
+    - id: mcp-data-standards
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: standards
+        transport: stdio
+        command: '<absolute path to .venv-local Python>'
+        args: ['<absolute path to backend/harness_mcp.py>', '--backend-url', 'http://127.0.0.1:8123']
+        env:
+          STANDARD_BACKEND_URL: http://127.0.0.1:8123
+          PYTHONIOENCODING: utf-8
+        toolCallTimeoutMs: 360000
+        failOnStartupError: true

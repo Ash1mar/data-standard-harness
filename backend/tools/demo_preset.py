@@ -35,6 +35,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 import shutil
 import time
 from datetime import datetime
@@ -183,7 +184,7 @@ def _set_state(**kw) -> dict:
 
 
 def is_active() -> bool:
-    return bool(_state().get("active"))
+    return os.getenv("STANDARD_EXECUTION_MODE") != "live" and bool(_state().get("active"))
 
 
 def is_capturing() -> bool:
@@ -272,8 +273,9 @@ def status() -> dict:
     tr = traces()
     return {
         "available": available(),
-        "active": bool(st.get("active")),
-        "capture": bool(st.get("capture")),
+        "active": is_active(),
+        "capture": os.getenv("STANDARD_EXECUTION_MODE") != "live" and bool(st.get("capture")),
+        "execution_mode": "live" if os.getenv("STANDARD_EXECUTION_MODE") == "live" else "demo-capable",
         "pid": PID,
         "title": m.get("title") or TITLE,
         "subtitle": m.get("subtitle") or SUBTITLE,
@@ -639,6 +641,8 @@ class DemoMiddleware:
         self.app = app
 
     async def __call__(self, scope, receive, send):
+        if os.getenv("STANDARD_EXECUTION_MODE") == "live":
+            return await self.app(scope, receive, send)
         if scope.get("type") != "http" or scope.get("method") != "POST":
             return await self.app(scope, receive, send)
         path = scope.get("path", "")

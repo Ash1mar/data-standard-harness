@@ -2679,8 +2679,10 @@ ${pend.join('、')}
         // 全局事件总线（用于门控项采集）
         function connectBus() {
           const es = new EventSource(API+'/api/events')
-          es.onmessage = (e) => { try {
-            const p = JSON.parse(e.data); const ev=p.event, data=p.data||{}, ts=p.ts||''
+          const receive = (e) => { try {
+            const p = JSON.parse(e.data)
+            const ev = e.type === 'message' ? p.event : e.type
+            const data = e.type === 'message' ? (p.data || {}) : p
             let tag='S'; if(data.mode==='A') tag='A'; else if(data.mode==='B') tag='B'
             if(ev==='connected'){ pushEvent('S','事件总线已连接'); return }
             if(ev==='gate_required'){ gates.push({mode:data.mode, item:data.item, reason:data.reason}); pushEvent(tag,`<b>gate_required</b> ${data.item.file} (${data.item.quality})`); return }
@@ -2690,6 +2692,13 @@ ${pend.join('、')}
             else if(ev==='mode_selected') pushEvent(tag,`<b>mode_selected</b> session=${data.session_id}`)
             else pushEvent(tag,`<b>${ev}</b> ${JSON.stringify(data).slice(0,70)}`)
           } catch(_){} }
+          es.onmessage = receive
+          for (const event of ['connected','gate_required','gate_resolved','stage_start','stage_complete',
+            'pipeline_complete','mode_selected','requirement_parsed','requirement_gap','requirement_match',
+            'requirement_synthesized','standard_generated','standard_enriched','graph_complete',
+            'extract_candidate','extract_complete','parse_result','parse_overview','library_updated']) {
+            es.addEventListener(event, receive)
+          }
           es.onerror = () => pushEvent('S','⚠ 事件总线重连中…')
         }
 
